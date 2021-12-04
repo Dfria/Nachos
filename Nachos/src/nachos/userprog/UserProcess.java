@@ -5,7 +5,9 @@ import nachos.threads.*;
 import nachos.userprog.*;
 
 import java.io.EOFException;
-
+import java.util.HashSet;
+import java.util.Hashtable;
+import java.util.NoSuchElementException;
 /**
  * Encapsulates the state of a user process that is not contained in its
  * user thread (or threads). This includes its address translation state, a
@@ -27,6 +29,12 @@ public class UserProcess {
 	pageTable = new TranslationEntry[numPhysPages];
 	for (int i=0; i<numPhysPages; i++)
 	    pageTable[i] = new TranslationEntry(i,i, true,false,false,false);
+	
+	fileDescriptor = new OpenFile[16];
+	fileDescriptor[0] = UserKernel.console.openForReading();
+	fileDescriptor[1] = UserKernel.console.openForWriting();
+	
+	exitStatus = null;
     }
     
     /**
@@ -345,6 +353,313 @@ public class UserProcess {
 	Lib.assertNotReached("Machine.halt() did not halt machine!");
 	return 0;
     }
+    
+	private int handleCreate(int file)
+	{
+		String filename = null;
+		
+		//Put this line in try catch? If fail return -1
+		filename = readVirtualMemoryString(file,256);
+		
+		if(filename == null)
+		{
+			Lib.debug(dbgProcess, "\thandleCreate: Could not read filename from Virtual Memory");
+			return -1;
+		}
+		
+		//Set to "true" to create a file if it does not already exist
+		OpenFile theFile = ThreadedKernel.fileSystem.open(filename, true);
+		
+		if(theFile == null)
+		{
+			Lib.debug(dbgProcess, "\thandleCreate: Could not open file from filesystem");
+			return -1;
+		}
+		else //theFile != null
+		{
+			int i=2;
+			for(; i<fileDescriptor.length; i++) 
+			{
+				if(fileDescriptor[i] == null)
+				{
+					fileDescriptor[i] = theFile;
+					return i;	//"Creating" the file by adding it to the file descriptor
+				}
+			}
+			if(i == fileDescriptor.length)
+			{
+				Lib.debug(dbgProcess, "\thandleCreate: No more space in file descriptor");
+				return -1;
+			}
+		}
+		
+		return -1;
+	}
+	
+	/**
+	 * Handle the open() system call.
+	 */
+	private int handleOpen(int file)
+	{
+		String filename = null;
+		
+		//Put this line in try catch? If fail return -1
+		filename = readVirtualMemoryString(file,256);
+		
+		if(filename == null)
+		{
+			Lib.debug(dbgProcess, "\thandleOpen: Could not read filename from Virtual Memory");
+			return -1;
+		}
+		
+		//Set to "false" to DON'T create a file if it does not already exist
+		OpenFile theFile = ThreadedKernel.fileSystem.open(filename, false);
+		
+		if(theFile == null)
+		{
+			Lib.debug(dbgProcess, "\thandleOpen: Could not open file from filesystem");
+			return -1;
+		}
+		else //theFile != null
+		{
+			int i=2;
+			for(; i<fileDescriptor.length; i++) 
+			{
+				if(fileDescriptor[i] == null)
+				{
+					fileDescriptor[i] = theFile;
+					return i;	//"Opening" the file by adding it to the file descriptor
+				}
+			}
+			if(i == fileDescriptor.length)
+			{
+				Lib.debug(dbgProcess, "\thandleOpen: No more space in file descriptor");
+				return -1;
+			}
+		}
+		
+		return -1;
+	}
+	
+	/**
+	 * Handle the close() system call.
+	 */
+	private int handleClose(int file)
+	{
+		// Can close FD 0 and 1
+		if(file<0 || file>15)
+		{
+			Lib.debug(dbgProcess, "\thandleClose: Trying to close the file descriptor "
+					+ file + " which is outside the range");
+			return -1;
+		}
+		
+		OpenFile theFile = fileDescriptor[file];
+		
+		if(theFile == null)
+		{
+			Lib.debug(dbgProcess, "\thandleClose: Trying to close a file that does not exist");
+			return -1;
+		}
+		else
+		{
+			theFile.close();
+			fileDescriptor[file] = null;
+			return 0;
+		}
+	}
+	
+	/**
+	 * Handle the read() system call.
+	 */
+	private int handleRead(int file, int buffer, int count)
+	{
+		if(file<0 || file == 1 || file>15)
+		{
+			Lib.debug(dbgProcess, "\thandleRead: Trying to read a file that does not exist, fd out of range " + file);
+			return -1;
+		}
+		
+		OpenFile theFile = fileDescriptor[file];
+		
+		if(theFile == null)
+		{
+			Lib.debug(dbgProcess, "\thandleRead: Trying to read a file that does not exist, file is null");
+			return -1;
+		}
+		
+		// TODO: Only write up to a pages amount and do multiple writes if need be
+		byte[] buff = new byte[pageSize];
+		int leftToRead = count;
+		int totalRead = 0;
+		int readByte = 0;
+		while (leftToRead > pageSize)
+		{
+			readByte = theFile.read(buff, 0, pageSize);
+			if(readByte == -1)
+			{
+				Lib.debug(dbgProcess, "\thandleRead: Failed to read file");
+				return -1;
+			}
+			else if (readByte == 0)
+			{
+				return totalRead;
+			}
+			
+			//write contents from buff to buffer
+			int readByte2 = writeVirtualMemory(buffer, buff, 0, readByte);
+			
+			if (readByte != readByte2)
+			{
+				Lib.debug(dbgProcess, "\thandleRead: Read and write amounts did not match");
+				return -1;
+			}
+			
+			buffer += readByte2;
+			totalRead += readByte2;
+			leftToRead -= readByte2;
+		}
+		
+		// The stuff left to write is less that pageSize now
+		readByte = theFile.read(buff, 0, leftToRead);
+		if(readByte == -1)
+		{
+			Lib.debug(dbgProcess, "\thandleRead: Failed to read file");
+			return -1;
+		}
+		
+		//write contents from buff to buffer
+		int readByte2 = writeVirtualMemory(buffer, buff, 0, readByte);
+		
+		if (readByte != readByte2)
+		{
+			Lib.debug(dbgProcess, "\thandleRead: Read and write amounts did not match");
+			return -1;
+		}
+		
+		totalRead += readByte2;
+		
+		return totalRead; 
+	}
+	
+	/**
+	 * Handle the write() system call.
+	 */
+	private int handleWrite(int file, int buffer, int count)
+	{
+		if (file == 0)
+		{
+			Lib.debug(dbgProcess, "\thandleRead: Trying to write to stdin");
+			return -1;
+		}
+		if(file<1 || file>15)
+		{
+			Lib.debug(dbgProcess, "\thandleRead: Trying to write to a file that does not exist");
+			return -1;
+		}
+		
+		OpenFile theFile = fileDescriptor[file];
+		
+		if(theFile == null)
+		{
+			Lib.debug(dbgProcess, "\thandleRead: Trying to write to a file that does not exist");
+			return -1;
+		}
+		
+		
+		
+		
+		// TODO: Only write up to a pages amount and do multiple writes if need be
+		byte[] buff = new byte[pageSize];
+		int leftToWrite = count;
+		int totalWrote = 0;
+		int wroteByte = 0;
+		while (leftToWrite > pageSize)
+		{
+			wroteByte = readVirtualMemory(buffer, buff);
+			
+			int wroteByte2 = theFile.write(buff, 0, wroteByte);
+			
+			if (wroteByte != wroteByte2)
+			{
+				Lib.debug(dbgProcess, "\tIn handleWrite and not all bytes written");
+			}
+			
+			if(wroteByte2 == -1)
+			{
+				Lib.debug(dbgProcess, "\thandleWrite: Failed to write to file");
+				return -1;
+			}
+			else if (wroteByte2 == 0)
+			{
+				return totalWrote;
+			}
+			
+			buffer += wroteByte2;
+			totalWrote += wroteByte2;
+			leftToWrite -= wroteByte2;
+		}
+		
+		// The stuff left to write is less that pageSize now
+		wroteByte = readVirtualMemory(buffer, buff, 0, leftToWrite);
+		
+		int wroteByte2 = theFile.write(buff, 0, wroteByte);
+		
+		if (wroteByte != wroteByte2)
+		{
+			Lib.debug(dbgProcess, "\tIn handleWrite and not all bytes written");
+		}
+		
+		if(wroteByte2 == -1)
+		{
+			Lib.debug(dbgProcess, "\thandleWrite: Failed to write to file");
+			return -1;
+		}
+		
+		totalWrote += wroteByte2;
+		
+		return totalWrote;
+	}
+	
+	/**
+	 * Handle the unlink() system call.
+	 */
+	private int handleUnlink(int file) 
+	{
+		String filename = readVirtualMemoryString(file,256);
+//		int numOpened;
+		
+		if(filename == null)
+		{
+			Lib.debug(dbgProcess, "\thandleUnlink: Could not read filename from Virtual Memory");
+			return -1;
+		}
+		
+		// If the file is in the table, then close it before deleting
+		int indexInTable = isInFDTable(filename);
+		if (indexInTable != -1)
+		{
+			handleClose(indexInTable);
+		}
+		
+		
+		if (ThreadedKernel.fileSystem.remove(filename))
+			return 0;
+		
+		// Should only get here if remove returned false
+		return -1;
+	}
+	
+	private int isInFDTable(String filename)
+	{
+		for (int i = 0; i < fileDescriptor.length; i++)
+		{
+			OpenFile currFile = fileDescriptor[i];
+			if (currFile != null && filename == currFile.getName())
+				return i;
+		}
+		return -1;
+	}
 
 
     private static final int
@@ -387,17 +702,27 @@ public class UserProcess {
      * @param	a3	the fourth syscall argument.
      * @return	the value to be returned to the user.
      */
-    public int handleSyscall(int syscall, int a0, int a1, int a2, int a3) {
-	switch (syscall) {
-	case syscallHalt:
-	    return handleHalt();
-
-
-	default:
-	    Lib.debug(dbgProcess, "Unknown syscall " + syscall);
-	    Lib.assertNotReached("Unknown system call!");
-	}
-	return 0;
+	public int handleSyscall(int syscall, int a0, int a1, int a2, int a3) {
+		switch (syscall) {
+		case syscallHalt:
+			return handleHalt();
+		case syscallCreate:
+    	    return handleCreate(a0);
+    	case syscallOpen:
+    	    return handleOpen(a0);
+        case syscallClose:
+            return handleClose(a0);
+        case syscallRead:
+            return handleRead(a0, a1, a2);
+        case syscallWrite:
+            return handleWrite(a0, a1, a2);
+        case syscallUnlink:
+        	return handleUnlink(a0);
+		default:
+			Lib.debug(dbgProcess, "Unknown syscall " + syscall);
+			Lib.assertNotReached("Unknown system call!");
+		}
+		return 0;
     }
 
     /**
@@ -446,4 +771,25 @@ public class UserProcess {
 	
     private static final int pageSize = Processor.pageSize;
     private static final char dbgProcess = 'a';
+
+	protected OpenFile[] fileDescriptor;
+	
+	// TODO: possibly get rid of currentlyOpened if it is no longer useful
+//	private static Hashtable<String,Integer> currentlyOpened = new Hashtable<String, Integer>();
+	
+//	private static Semaphore openFilesMutex = new Semaphore(1);
+	
+	protected int pID;
+	
+	protected Semaphore parentMutex = new Semaphore(1);
+	protected UserProcess parent;
+		
+	protected Hashtable<Integer,UserProcess> children = new Hashtable<Integer, UserProcess>();
+	
+	protected Integer exitStatus;
+	
+	// Used to join a child
+	protected Lock statusLock;
+	protected Condition joinCond;
+	
 }
