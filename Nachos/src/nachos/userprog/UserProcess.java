@@ -317,7 +317,7 @@ public class UserProcess {
     /**
      * Release any resources allocated by <tt>loadSections()</tt>.
      */
-    protected void unloadSections() {
+    protected void unloadSections() {	
     }    
 
     /**
