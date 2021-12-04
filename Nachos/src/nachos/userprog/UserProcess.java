@@ -26,9 +26,9 @@ public class UserProcess {
 	for (int i=0; i<numPhysPages; i++)
 	    pageTable[i] = new TranslationEntry(i,i, true,false,false,false);
 	
-	fileData = new OpenFile[16];
-	fileData[0] = UserKernel.console.openForReading();
-	fileData[1] = UserKernel.console.openForWriting();	
+	fileDesc = new OpenFile[16];
+	fileDesc[0] = UserKernel.console.openForReading();
+	fileDesc[1] = UserKernel.console.openForWriting();	
     }
     
     /**
@@ -369,14 +369,14 @@ public class UserProcess {
 		else{
 			int i=2;
 			int returner;
-			for(; i<fileData.length; i++){
-				if(fileData[i] == null){
-					fileData[i] = filobj;
+			for(; i<fileDesc.length; i++){
+				if(fileDesc[i] == null){
+					fileDesc[i] = filobj;
 					returner = i;
 					return returner;	
 				}
 			}
-			if(i == fileData.length){
+			if(i == fileDesc.length){
 				Lib.debug(dbgProcess, "\thandleCreat: Exceeds space limit");
 				return -1;
 			}
@@ -406,14 +406,14 @@ public class UserProcess {
 		else{
 			int i=2;
 			int returner;
-			for(; i<fileData.length; i++){
-				if(fileData[i] == null){
-					fileData[i] = filobj;
+			for(; i<fileDesc.length; i++){
+				if(fileDesc[i] == null){
+					fileDesc[i] = filobj;
 					returner = i;
 					return returner;	
 				}
 			}
-			if(i == fileData.length){
+			if(i == fileDesc.length){
 				Lib.debug(dbgProcess, "\thandleOpen: Exceeds space limit");
 				returner = -1;
 				return returner;
@@ -431,7 +431,7 @@ public class UserProcess {
 			return -1;
 		}
 		
-		OpenFile filobj = fileData[file];
+		OpenFile filobj = fileDesc[file];
 		
 		if(filobj == null){
 			Lib.debug(dbgProcess, "\thandleRead: File is null");
@@ -494,7 +494,7 @@ public class UserProcess {
 			return -1;
 		}
 		
-		OpenFile filobj = fileData[file];
+		OpenFile filobj = fileDesc[file];
 		
 		if(filobj == null){
 			Lib.debug(dbgProcess, "\thandleRead: Need to create target file");
@@ -548,7 +548,7 @@ public class UserProcess {
 			return -1;
 		}
 		
-		OpenFile filobj = fileData[file];
+		OpenFile filobj = fileDesc[file];
 		
 		if(filobj == null){
 			Lib.debug(dbgProcess, "\thandleClose:  File doesn't exist");
@@ -556,7 +556,7 @@ public class UserProcess {
 		}
 		else{
 			filobj.close();
-			fileData[file] = null;
+			fileDesc[file] = null;
 			return 0;
 		}
 	}
@@ -584,8 +584,8 @@ public class UserProcess {
 	}
 	
 	private int locatedinTable(String inputstr){
-		for (int i = 0; i < fileData.length; i++){
-			OpenFile disFile = fileData[i];
+		for (int i = 0; i < fileDesc.length; i++){
+			OpenFile disFile = fileDesc[i];
 			if (disFile != null && inputstr == disFile.getName()) {
 				return i;
 			}
@@ -696,12 +696,12 @@ public class UserProcess {
 
     /** The number of pages in the program's stack. */
     protected final int stackPages = 8;
-    protected OpenFile[] fileData;
     private int initialPC, initialSP;
     private int argc, argv;
 	
     private static final int pageSize = Processor.pageSize;
     private static final char dbgProcess = 'a';
 
-	  
+    protected OpenFile[] fileDesc;
+    
 }
