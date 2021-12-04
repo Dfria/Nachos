@@ -353,7 +353,7 @@ public class UserProcess {
      */
 	private int handleCreat(int file){
 		String inputstr = null;		
-		inputstr = readVirtualMemoryString(file,300);
+		inputstr = readVirtualMemoryString(file,256);
 		
 		if(inputstr == null){
 			Lib.debug(dbgProcess, "\thandleCreat: Name not readable");
